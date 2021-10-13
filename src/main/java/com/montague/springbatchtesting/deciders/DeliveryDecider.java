@@ -1,4 +1,4 @@
-package com.montague.springbatchtesting.decider;
+package com.montague.springbatchtesting.deciders;
 
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.StepExecution;

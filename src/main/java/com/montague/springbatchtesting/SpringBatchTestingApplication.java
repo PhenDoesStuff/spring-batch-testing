@@ -1,13 +1,18 @@
 package com.montague.springbatchtesting;
 
-import com.montague.springbatchtesting.decider.DeliveryDecider;
-import com.montague.springbatchtesting.decider.ThankDecider;
+import com.montague.springbatchtesting.deciders.DeliveryDecider;
+import com.montague.springbatchtesting.deciders.ThankDecider;
+import com.montague.springbatchtesting.listeners.FlowersSelectionStepExecutionListener;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
+import org.springframework.batch.core.StepExecutionListener;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.job.builder.FlowBuilder;
+import org.springframework.batch.core.job.flow.Flow;
 import org.springframework.batch.core.job.flow.JobExecutionDecider;
+import org.springframework.batch.core.job.flow.support.SimpleFlow;
 import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringApplication;
@@ -35,6 +40,24 @@ public class SpringBatchTestingApplication {
     @Bean
     public JobExecutionDecider thankDecider() {
         return new ThankDecider();
+    }
+
+    @Bean
+    public Flow deliveryFlow() {
+        return new FlowBuilder<SimpleFlow>("deliveryFlow").start(driveToAddressStep())
+                .on("FAILED").fail()
+                .from(driveToAddressStep())
+                .on("*").to(deliveryDecider())
+                .on("PRESENT").to(thankCustomerStep())
+                .next(thankDecider()).on("THANK CUSTOMER").to(thankCustomerStep())
+                .from(thankDecider()).on("REFUND CUSTOMER").to(refundCustomerStep())
+                .from(deliveryDecider())
+                .on("NOT PRESENT").to(leaveAtDoorStep()).build();
+    }
+
+    @Bean
+    public StepExecutionListener selectFlowerListener() {
+        return new FlowersSelectionStepExecutionListener();
     }
 
     @Bean
@@ -85,6 +108,30 @@ public class SpringBatchTestingApplication {
     }
 
     @Bean
+    public Step selectFlowersStep() {
+        return this.stepBuilderFactory.get("selectFlowersStep").tasklet((contribution, chunkContext) -> {
+            System.out.println("Gathering flowers for order.");
+            return RepeatStatus.FINISHED;
+        }).listener(selectFlowerListener()).build();
+    }
+
+    @Bean
+    public Step removeThornsStep() {
+        return this.stepBuilderFactory.get("removeThornsStep").tasklet((contribution, chunkContext) -> {
+            System.out.println("Remove thorns from roses.");
+            return RepeatStatus.FINISHED;
+        }).build();
+    }
+
+    @Bean
+    public Step arrangeFlowersStep() {
+        return this.stepBuilderFactory.get("arrangeFlowersStep").tasklet((contribution, chunkContext) -> {
+            System.out.println("Arranging flowers for order.");
+            return RepeatStatus.FINISHED;
+        }).build();
+    }
+
+    @Bean
     public Step thankCustomerStep() {
         return stepBuilderFactory.get("thankCustomerStep").tasklet((stepContribution, chunkContext) -> {
             System.out.println("Thank you for your order");
@@ -101,19 +148,36 @@ public class SpringBatchTestingApplication {
     }
 
     @Bean
+    public Step sendInvoiceStep() {
+        return stepBuilderFactory.get("sendInvoiceStep").tasklet((stepContribution, chunkContext) -> {
+            System.out.println("Invoice is sent to the customer");
+            return RepeatStatus.FINISHED;
+        }).build();
+    }
+
+    @Bean
     public Job deliverPackageJob() {
         return jobBuilderFactory.get("deliverPackageJob")
                 .start(packageItemStep())
-                .next(driveToAddressStep())
-                    .on("FAILED").to(storePackageStep())
-                .from(driveToAddressStep())
-                    .on("*").to(deliveryDecider())
-                        .on("PRESENT").to(thankCustomerStep())
-                            .next(thankDecider()).on("THANK CUSTOMER").to(thankCustomerStep())
-                            .from(thankDecider()).on("REFUND CUSTOMER").to(refundCustomerStep())
-                .from(deliveryDecider())
-                .on("NOT PRESENT").to(leaveAtDoorStep())
+                .on("*").to(deliveryFlow())
                 .end()
                 .build();
+    }
+
+    @Bean
+    public Job prepareFlowers() {
+        return this.jobBuilderFactory.get("prepareFlowersJob")
+                .start(selectFlowersStep())
+                .on("TRIM REQUIRED").to(removeThornsStep()).next(arrangeFlowersStep())
+                .from(selectFlowersStep())
+                .on("NO TRIM REQUIRED").to(arrangeFlowersStep())
+                .from(arrangeFlowersStep()).on("*").to(deliveryFlow())
+                .end()
+                .build();
+    }
+
+    @Bean
+    public Job billingJob() {
+        return jobBuilderFactory.get("billingJob").start(sendInvoiceStep()).build();
     }
 }
